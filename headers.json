@@ -1,0 +1,16 @@
+{
+    "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+    "accept-encoding": "gzip, deflate, br, zstd",
+    "accept-language": "en-US,en;q=0.9",
+    "cookie": "theme=system; GROUND_FEED_EDITION=top-us; user_personalization=%7B%22homepageBannerSeen%22%3A%222025-02-14T23%3A05%3A14.608Z%22%2C%22giftBannerVisible%22%3A%22true%22%2C%22stickyBannerExp%22%3A%22I%22%2C%22stickyBannerState%22%3A%22subscribe%22%7D; theme=system; GROUND_LOGIN_TOKEN=4a110f90-c2a7-4543-85f9-a6c52a495563; GROUND_USER=JTdCJTIyYXZhdGFyJTIyJTNBJTIyaHR0cHMlM0ElMkYlMkZncm91bmRuZXdzLmItY2RuLm5ldCUyRmF2YXRhcnMlMkZmYWNlcyUyRmIzLnBuZyUyMiUyQyUyMmNhdGVnb3J5JTIyJTNBJTIydXNlciUyMiUyQyUyMmVtYWlsJTIyJTNBJTIybWF4emh1eXQlNDBnbWFpbC5jb20lMjIlMkMlMjJmdWxsbmFtZSUyMiUzQSUyMkdyb3VuZCUyME5ld3MlMjByZWFkZXIlMjIlMkMlMjJpZCUyMiUzQTUxODA3MjclMkMlMjJzdWJzY3JpYmVkVW50aWwlMjIlM0FudWxsJTJDJTIyc3Vic2NyaXB0aW9uU3RhdHVzJTIyJTNBJTIyZnJlZSUyMiUyQyUyMmltYWdlTW9kZSUyMiUzQW51bGwlMkMlMjJsb2NhbE5ld3MlMjIlM0ElN0IlMjJsb2NhbElzTWFudWFsJTIyJTNBZmFsc2UlN0QlMkMlMjJpbnN0VmVyaWZQZW5kaW5nJTIyJTNBZmFsc2UlMkMlMjJzdHJpcGVDdXN0b21lcklkJTIyJTNBbnVsbCU3RA%3D%3D; user_personalization=%7B%22homepageBannerSeen%22%3A%222025-02-14T23%3A05%3A14.608Z%22%2C%22giftBannerVisible%22%3A%22true%22%2C%22stickyBannerExp%22%3A%22I%22%2C%22stickyBannerState%22%3A%22subscribe%22%7D; ANONYMOUS_USER_ID=utnhywl5mop; gbStickyBuckets__id||utnhywl5mop={%22attributeName%22:%22id%22%2C%22attributeValue%22:%22utnhywl5mop%22%2C%22assignments%22:{%22promo-popup-variant__0%22:%222%22}}; _gcl_au=1.1.2115914649.1739574505; _ga=GA1.1.12897190.1739574505; _ga_PG1LPXY8KE=GS1.1.1739574505.1.0.1739574505.0.0.0; _fbp=fb.1.1739574505496.321004455677579582; PAPVisitorId=qkR6uLvESc5aT1pBko5QqyhC0VVzjCdk; _uetsid=98269590eb2811ef80b6cb965a640c7b; _uetvid=98269fe0eb2811ef95bc9bbc40f85756; _clck=1cylfe6%7C2%7Cftf%7C0%7C1871; _rdt_uuid=1739574505589.861d5864-b032-4c6f-9b0f-8be1eb45e56c; _clsk=1ne40w2%7C1739574505963%7C1%7C1%7Cw.clarity.ms%2Fcollect; _ga_F2T1ZY3G9V=GS1.1.1739574505.1.1.1739574506.0.0.0; __stripe_mid=7b2e1034-47a9-4396-9cfa-2a20a7452435520ab8; __stripe_sid=7e55ff78-68ec-44da-b95f-4b588e3ebeb52549a1; _dd_s=logs=1&id=a2d044b3-a693-4678-9986-cf8317ffe3bf&created=1739574505159&expire=1739575405159",
+    "priority": "u=0, i",
+    "sec-ch-ua": "\"Not(A:Brand\";v=\"99\", \"Google Chrome\";v=\"133\", \"Chromium\";v=\"133\"",
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": "\"macOS\"",
+    "sec-fetch-dest": "document",
+    "sec-fetch-mode": "navigate",
+    "sec-fetch-site": "none",
+    "sec-fetch-user": "?1",
+    "upgrade-insecure-requests": "1",
+    "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36"
+}
