@@ -71,6 +71,7 @@ def name2href(topic_name):
     return '/interest/' + topic_name.lower().replace(' ', '-')
 
 
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--category', type=str,
