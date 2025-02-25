@@ -89,7 +89,7 @@ async def process_event(interest_id: str, interest_slug: str, initial_offset: in
                         output_dir: str, progress: dict, progress_lock: asyncio.Lock) -> None:
     """
     Repeatedly fetch story IDs until we have at least top_n unique IDs for the interest.
-    When a request returns no new IDs, mark the interest as finished.
+    When a request returns no new IDs or the target is reached, mark the interest as finished.
     """
     filename = os.path.join(output_dir, "story_ids_by_interest", f"story_ids_{interest_slug}.csv")
     df, unique_ids = read_existing_story_csv(filename)
@@ -113,20 +113,15 @@ async def process_event(interest_id: str, interest_slug: str, initial_offset: in
             new_rows.append({"offset": current_offset + i, "story_id": sid})
             unique_ids.add(sid)
 
-        print(
-            f"[INFO] Interest {interest_slug} | "
-            f"Offset {current_offset} | "
-            f"Added {new_id_count} new IDs. "
-            f"Total unique IDs: {len(unique_ids)}"
-        )
+        print(f"[INFO] Interest {interest_slug} | Offset {current_offset} | Added {new_id_count} new IDs. Total unique IDs: {len(unique_ids)}")
         if new_rows:
             new_df = pd.DataFrame(new_rows)
             df = pd.concat([df, new_df], ignore_index=True)
             write_story_csv(filename, df)
 
         if len(unique_ids) >= top_n:
-            print(f"[INFO] Reached target of {top_n} unique IDs for interest {interest_slug}.")
-            await update_progress(progress, interest_slug, False, progress_lock)
+            print(f"[INFO] Reached target of {top_n} unique IDs for interest {interest_slug}. Marking as finished.")
+            await update_progress(progress, interest_slug, True, progress_lock)
             break
 
         current_offset += STEP
@@ -175,9 +170,10 @@ async def process_interest(interest_name: str, endpoint: str, initial_offset: in
 
 async def worker(queue: asyncio.Queue, client: httpx.AsyncClient, semaphore: asyncio.Semaphore,
                  output_dir: str, initial_offset: int, top_n: int,
-                 progress: dict, progress_lock: asyncio.Lock) -> None:
+                 progress: dict, progress_lock: asyncio.Lock, total_count: int) -> None:
     """
     Worker that continuously processes interests from the queue.
+    After each interest is processed, prints overall progress.
     """
     while True:
         item = await queue.get()
@@ -187,6 +183,8 @@ async def worker(queue: asyncio.Queue, client: httpx.AsyncClient, semaphore: asy
         interest_name, endpoint = item
         await process_interest(interest_name, endpoint, initial_offset, top_n,
                                client, semaphore, output_dir, progress, progress_lock)
+        finished_count = sum(1 for v in progress.values() if v)
+        print(f"[OVERALL PROGRESS] {finished_count}/{total_count} interests finished.")
         queue.task_done()
 
 async def main() -> None:
@@ -211,7 +209,6 @@ async def main() -> None:
     os.makedirs(os.path.join(args.output_dir, "interests"), exist_ok=True)
 
     progress_csv_path = os.path.join(args.output_dir, "progress.csv")
-    # Load progress from file if it exists, otherwise start fresh.
     progress = load_progress(progress_csv_path)
     progress_lock = asyncio.Lock()
 
@@ -222,34 +219,42 @@ async def main() -> None:
         print(f"[ERROR] Failed to load interests file '{args.input_file}': {e}")
         return
 
-    # Create a queue and enqueue all interests.
+    total_count = len(interests)
     queue: asyncio.Queue = asyncio.Queue()
     for interest_name, endpoint in interests.items():
         queue.put_nowait((interest_name, endpoint))
 
     semaphore = asyncio.Semaphore(args.workers)
 
-    async with httpx.AsyncClient() as client:
-        worker_tasks = [
-            asyncio.create_task(worker(queue, client, semaphore, args.output_dir,
-                                         args.offset, args.n, progress, progress_lock))
-            for _ in range(args.workers)
-        ]
+    try:
+        async with httpx.AsyncClient() as client:
+            worker_tasks = [
+                asyncio.create_task(worker(queue, client, semaphore, args.output_dir,
+                                             args.offset, args.n, progress, progress_lock, total_count))
+                for _ in range(args.workers)
+            ]
 
-        # Add termination signals for each worker.
-        for _ in range(args.workers):
-            await queue.put(None)
+            # Add termination signals for each worker.
+            for _ in range(args.workers):
+                await queue.put(None)
 
-        await queue.join()
+            await queue.join()
 
-        # Cancel any remaining worker tasks.
-        for task in worker_tasks:
-            task.cancel()
-        await asyncio.gather(*worker_tasks, return_exceptions=True)
-
-    # Save the in-memory progress data to CSV on exit.
-    save_progress(progress, progress_csv_path)
-    print(f"[INFO] Progress saved to {progress_csv_path}")
+            for task in worker_tasks:
+                task.cancel()
+            await asyncio.gather(*worker_tasks, return_exceptions=True)
+    except KeyboardInterrupt:
+        print("[INFO] Keyboard interrupt received. Saving progress and exiting.")
+        raise
+    except Exception as e:
+        print(f"[ERROR] Fatal error encountered: {e}")
+        raise
+    finally:
+        save_progress(progress, progress_csv_path)
+        print(f"[INFO] Progress saved to {progress_csv_path}")
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("[INFO] Exiting due to keyboard interrupt.")
