@@ -197,7 +197,7 @@ async def main() -> None:
                         help="Total number of unique story IDs to collect per interest (default: 10).")
     parser.add_argument('--offset', type=int, default=0,
                         help="Initial offset for the API (default: 0).")
-    parser.add_argument('-w', '--workers', type=int, default=5,
+    parser.add_argument('-w', '--num_workers', type=int, default=5,
                         help="Number of concurrent worker tasks and maximum concurrent HTTP requests (default: 5).")
     parser.add_argument('-o', '--output-dir', type=str, default='.',
                         help="Directory to save output files (default: current directory).")
