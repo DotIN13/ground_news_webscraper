@@ -141,7 +141,7 @@ def load_page(driver, link, pause_time=2):
         # Switch back to the original link tab
         driver.switch_to.window(link_tab)
 
-        WebDriverWait(driver, 3).until(
+        WebDriverWait(driver, 5).until(
             lambda drv: drv.execute_script(
                 "return document.readyState") == "complete" and
             EC.presence_of_element_located((By.TAG_NAME, "body"))
@@ -184,7 +184,7 @@ def reset_driver(driver=None):
             driver.close()
             driver.quit()
     except Exception as e:
-        raise RuntimeError(f"Error resetting driver: {e}") from e
+        print(f"Error resetting driver: {e}")
 
     driver = uc.Chrome(options=new_chrome_options())
     time.sleep(1)  # Allow time for the driver to initialize
@@ -201,21 +201,23 @@ def process_task(task_id, link, driver, output_dir):
 
     # Try to use newsplease to download the article
     html = SimpleCrawler.fetch_url(link, timeout=10, user_agent=user_agent)
-    article = NewsPlease.from_html(html, url=link)
-
-    if not (html and article and article.maintext):
+    if not html:
         # If newsplease fails, try to download using Selenium
+        print(f"Newsplease failed to fetch html for {task_id}: {link}")
         html = process_html_download(link, driver)
-        article = NewsPlease.from_html(html, url=link)
+    
+    if not html:
+        return f"Failed to fetch html for {task_id}: {link}"
+    
+    # Save html content
+    save_html_content(html, html_file)
+    article = NewsPlease.from_html(html, url=link)
+    if not (article and article.maintext):
+        return f"Failed to parse article for {task_id}: {link}"
 
-    if html and article and article.maintext:
-        save_html_content(html, html_file)
-
-        with open(article_file, "w", encoding="utf-8") as f:
-            json.dump(article.get_serializable_dict(), f, indent=4)
-        return f"Saved article: {article_file}"
-
-    return f"Failed to download {task_id}: {link}"
+    with open(article_file, "w", encoding="utf-8") as f:
+        json.dump(article.get_serializable_dict(), f, indent=4)
+    return f"Saved article: {article_file}"
 
 
 class Worker(Thread):
