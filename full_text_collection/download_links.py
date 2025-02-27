@@ -1,7 +1,9 @@
 import os
+import json
 import time
 import random
 import requests
+import gzip
 from queue import Queue, Empty
 from threading import Thread, Event
 from requests.adapters import HTTPAdapter
@@ -10,6 +12,7 @@ from requests.packages.urllib3.util import Retry
 
 import certifi
 import pandas as pd
+from newsplease import NewsPlease, SimpleCrawler
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -40,6 +43,8 @@ def new_chrome_options():
     options.add_argument("--remote-allow-origins=*")
     options.add_argument("--ignore-certificate-errors")
     options.add_argument("--allow-insecure-localhost")
+    options.add_argument(
+        '--load-extension=D:/crx/bypass-paywalls-chrome-clean-4.0.5.7')
     prefs = {
         # Disable images
         "profile.managed_default_content_settings.images": 2,
@@ -108,11 +113,12 @@ def scroll_to_bottom(driver, pause_time=2):
         for _ in range(3):  # Limit to 3 scrolls
             driver.execute_script(
                 "window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(pause_time)
+            time.sleep(pause_time)  # Wait for new content to load
             new_height = driver.execute_script(
                 "return document.body.scrollHeight")
             if new_height == last_height:
                 break
+
             last_height = new_height
     except Exception as e:
         raise RuntimeError(f"Error while scrolling: {e}") from e
@@ -122,7 +128,20 @@ def load_page(driver, link, pause_time=2):
     """Loads a page in Selenium and waits for it to be fully loaded."""
     try:
         driver.get(link)
-        WebDriverWait(driver, 5).until(
+
+        # Save the handle of the current (link) tab
+        link_tab = driver.current_window_handle
+
+        # If any extra tabs are open, close them
+        for handle in driver.window_handles:
+            if handle != link_tab:
+                driver.switch_to.window(handle)
+                driver.close()
+
+        # Switch back to the original link tab
+        driver.switch_to.window(link_tab)
+
+        WebDriverWait(driver, 3).until(
             lambda drv: drv.execute_script(
                 "return document.readyState") == "complete" and
             EC.presence_of_element_located((By.TAG_NAME, "body"))
@@ -142,57 +161,61 @@ def extract_body_content(driver):
 
 
 def save_html_content(html_content, html_filename):
-    """Saves the HTML content to a file."""
-    try:
-        with open(html_filename, "w", encoding="utf-8") as html_file:
-            html_file.write(html_content)
-        return f"Saved body HTML: {html_filename}"
-    except Exception as e:
-        raise RuntimeError(
-            f"Error writing HTML to file {html_filename}: {e}") from e
+    """Saves the gzipped HTML content to a file."""
+    with gzip.open(html_filename, 'wt', encoding='utf-8') as f:
+        f.write(html_content)
+    return f"Saved body HTML: {html_filename}"
 
 
-def process_html_download(link, driver, html_filename):
+def process_html_download(link, driver):
     """Main function to handle HTML download using Selenium."""
     try:
         load_page(driver, link)
-        body_content = extract_body_content(driver)
-        return save_html_content(body_content, html_filename)
+        return driver.page_source
     except RuntimeError as e:
-        return str(e)
+        print(f"Error processing HTML download: {e}")
+        return None
+
+
+def reset_driver(driver=None):
+    """Resets the Selenium driver."""
+    try:
+        if driver:
+            driver.close()
+            driver.quit()
+    except Exception as e:
+        raise RuntimeError(f"Error resetting driver: {e}") from e
+
+    driver = uc.Chrome(options=new_chrome_options())
+    time.sleep(1)  # Allow time for the driver to initialize
+    return driver
 
 
 def process_task(task_id, link, driver, output_dir):
     """
     Processes a single task: downloads as PDF if link is a PDF, otherwise saves the HTML content.
     """
-    pdf_filename = os.path.join(output_dir, f"{task_id}.pdf")
-    if os.path.exists(pdf_filename):
-        return f"PDF already exists: {pdf_filename}"
+    html_file = os.path.join(output_dir, f"{task_id}.html.gz")
+    article_file = os.path.join(output_dir, f"{task_id}.json")
+    user_agent = random.choice(user_agents)
 
-    html_filename = os.path.join(output_dir, f"{task_id}.html")
-    if os.path.exists(html_filename):
-        return f"HTML already exists: {html_filename}"
+    # Try to use newsplease to download the article
+    html = SimpleCrawler.fetch_url(link, timeout=10, user_agent=user_agent)
+    article = NewsPlease.from_html(html, url=link)
 
-    headers = {'User-Agent': random.choice(user_agents)}
+    if not (html and article and article.maintext):
+        # If newsplease fails, try to download using Selenium
+        html = process_html_download(link, driver)
+        article = NewsPlease.from_html(html, url=link)
 
-    # Determine if PDF or HTML by using requests.head()
-    content_type = ""
-    try:
-        response = requests.head(
-            link, allow_redirects=True, timeout=10,
-            verify=certifi.where(), headers=headers
-        )
-        content_type = response.headers.get('Content-Type', '').lower()
-    except requests.exceptions.RequestException:
-        print(f"Error during requests.head() for link {link}")
+    if html and article and article.maintext:
+        save_html_content(html, html_file)
 
-    if 'application/pdf' in content_type or link.endswith(".pdf"):
-        # Download PDF
-        return process_pdf_download(link, pdf_filename)
-    else:
-        # Load HTML with Selenium
-        return process_html_download(link, driver, html_filename)
+        with open(article_file, "w", encoding="utf-8") as f:
+            json.dump(article.get_serializable_dict(), f, indent=4)
+        return f"Saved article: {article_file}"
+
+    return f"Failed to download {task_id}: {link}"
 
 
 class Worker(Thread):
@@ -205,33 +228,24 @@ class Worker(Thread):
 
     def run(self):
         # Initialize a single driver for this thread
-        self.driver = uc.Chrome(options=new_chrome_options())
+        self.driver = reset_driver()
         successful = 0
 
         while not self.stop_event.is_set():
             try:
                 # Get a batch of tasks
-                batch = self.task_queue.get(timeout=1)
+                task_id, link = self.task_queue.get(timeout=1)
             except Empty:
                 continue
 
-            for task_id, link in batch:
-                if self.stop_event.is_set():
-                    break
+            result = process_task(
+                task_id, link, self.driver, self.output_dir)
+            print(result)
+            successful += 1
 
-                result = process_task(
-                    task_id, link, self.driver, self.output_dir)
-                print(result)
-                if isinstance(result, str) and result.startswith("Saved"):
-                    successful += 1
-                    # Reset the driver after each 64 tasks
-                    if successful % 64 != 0:
-                        continue
-
-                    self.driver.close()
-                    self.driver.quit()
-                    self.driver = uc.Chrome(
-                        options=new_chrome_options())
+            if successful % 64 == 0 and successful > 0:
+                # Reset the driver every 64 tasks
+                self.driver = reset_driver(self.driver)
 
             # Finished processing this batch
             self.task_queue.task_done()
@@ -242,8 +256,9 @@ class Worker(Thread):
             self.driver.quit()
 
 
-def download_links_queue(csv_file, output_dir, num_workers=4):
-    data = pd.read_csv(csv_file)
+def download_links_queue(input_file, output_dir, num_workers=4):
+    with open(input_file, "r", encoding="utf-8") as f:
+        data = json.load(f)
     os.makedirs(output_dir, exist_ok=True)
 
     # Patch upfront (to ensure undetected_chromedriver setup)
@@ -254,16 +269,16 @@ def download_links_queue(csv_file, output_dir, num_workers=4):
     task_queue = Queue()
 
     # Break tasks into batches of 50
-    tasks = [(row.id, row.link) for row in data.itertuples()]
-    existing = set(int(file.split(".")[0]) for file in os.listdir(output_dir))
-    tasks = [(tid, link) for tid, link in tasks if tid not in existing]
-    print(f"Total tasks: {len(tasks)}")
-    random.shuffle(tasks)
+    for _sid, story in data.items():
+        for source in story["sources"]:
+            output_file = os.path.join(
+                output_dir, f"{source['refId']}.json")
+            if os.path.exists(output_file):
+                continue
 
-    batch_size = 64
-    for i in range(0, len(tasks), batch_size):
-        batch = tasks[i:i+batch_size]
-        task_queue.put(batch)
+            task_queue.put((source['refId'], source['url']))
+
+    print(f"Total tasks: {task_queue.qsize()}")
 
     # Start workers
     workers = [Worker(task_queue, output_dir, stop_event)
@@ -289,9 +304,13 @@ def download_links_queue(csv_file, output_dir, num_workers=4):
                 break
 
     # Wait for all workers to finish
+    print("Waiting for workers to finish...")
+
+    stop_event.set()
     for w in workers:
         w.join()
 
 
 if __name__ == "__main__":
-    download_links_queue("links.csv", "downloads", num_workers=8)
+    download_links_queue(
+        "data/sources_by_interest/story_ids_ai.json", "data/downloads", num_workers=8)

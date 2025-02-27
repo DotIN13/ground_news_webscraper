@@ -168,3 +168,5 @@ cython_debug/
 #.idea/
 
 data
+bypass-paywalls-chrome-clean-4.0.5.7
+log
