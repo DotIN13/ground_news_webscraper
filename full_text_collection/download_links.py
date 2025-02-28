@@ -182,6 +182,7 @@ def reset_driver(driver=None):
     try:
         if driver:
             driver.close()
+            time.sleep(1)
             driver.quit()
     except Exception as e:
         print(f"Error resetting driver: {e}")
@@ -199,25 +200,31 @@ def process_task(task_id, link, driver, output_dir):
     article_file = os.path.join(output_dir, f"{task_id}.json")
     user_agent = random.choice(user_agents)
 
-    # Try to use newsplease to download the article
-    html = SimpleCrawler.fetch_url(link, timeout=10, user_agent=user_agent)
-    if not html:
-        # If newsplease fails, try to download using Selenium
-        print(f"Newsplease failed to fetch html for {task_id}: {link}")
-        html = process_html_download(link, driver)
-    
-    if not html:
-        return f"Failed to fetch html for {task_id}: {link}"
-    
-    # Save html content
-    save_html_content(html, html_file)
-    article = NewsPlease.from_html(html, url=link)
-    if not (article and article.maintext):
-        return f"Failed to parse article for {task_id}: {link}"
+    try:
+        # Try to use newsplease to download the article
+        html = SimpleCrawler.fetch_url(link, timeout=10, user_agent=user_agent)
+        if not html:
+            # If newsplease fails, try to download using Selenium
+            print(f"Newsplease failed to fetch html for {task_id}: {link}")
+            html = process_html_download(link, driver)
 
-    with open(article_file, "w", encoding="utf-8") as f:
-        json.dump(article.get_serializable_dict(), f, indent=4)
-    return f"Saved article: {article_file}"
+        if not html:
+            return f"Failed to fetch html for {task_id}: {link}"
+
+        # Save html content
+        save_html_content(html, html_file)
+        article = NewsPlease.from_html(html, url=link)
+        if not (article and article.maintext):
+            return f"Failed to parse article for {task_id}: {link}"
+
+        with open(article_file, "w", encoding="utf-8") as f:
+            json.dump(article.get_serializable_dict(), f, indent=4)
+        return f"Saved article: {article_file}"
+
+    except Exception as e:
+        print(f"Unexpected error processing task {task_id}: {e}")
+
+    return f"Failed to process task {task_id}: {link}"
 
 
 class Worker(Thread):
@@ -255,6 +262,7 @@ class Worker(Thread):
         # Stop event set or no more tasks: close the driver
         if self.driver:
             self.driver.close()
+            time.sleep(1)
             self.driver.quit()
 
 
@@ -273,8 +281,11 @@ def download_links_queue(input_file, output_dir, num_workers=4):
     # Break tasks into batches of 50
     for _sid, story in data.items():
         for source in story["sources"]:
+            if not source.get("url"):
+                continue
+
             output_file = os.path.join(
-                output_dir, f"{source['refId']}.json")
+                output_dir, f"{source['refId']}.html.gz")
             if os.path.exists(output_file):
                 continue
 
