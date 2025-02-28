@@ -24,8 +24,12 @@ retries = Retry(total=3, backoff_factor=1,
 adapter = HTTPAdapter(max_retries=retries)
 session.mount("https://", adapter)
 
+# List of bad sources, domain to failed times
+bad_sources = {}
+
 
 scroll_pause_time = 2
+FAIL_THRESHOLD = 8
 
 # Define a global list of user agents for both Selenium and requests
 user_agents = [
@@ -164,40 +168,68 @@ def save_html_content(html_content, html_filename):
     """Saves the gzipped HTML content to a file."""
     with gzip.open(html_filename, 'wt', encoding='utf-8') as f:
         f.write(html_content)
-    return f"Saved body HTML: {html_filename}"
+    print(f"Saved HTML: {html_filename}")
 
 
-def process_html_download(link, driver):
-    """Main function to handle HTML download using Selenium."""
+def save_article_json(article, article_filename):
+    """Saves the article JSON content to a file."""
+    with open(article_filename, "w", encoding="utf-8") as f:
+        json.dump(article.get_serializable_dict(), f, indent=4)
+    print(f"Saved article: {article_filename}")
+
+
+def download_html_with_selenium(task_id, link, driver):
+    """Downloads the article using Selenium."""
     try:
         load_page(driver, link)
-        return driver.page_source
-    except RuntimeError as e:
-        print(f"Error processing HTML download: {e}")
+        html = driver.page_source
+        if not html:
+            raise ValueError(
+                f"Failed to fetch HTML with Selenium for {task_id}: {link}")
+
+        return html
+    except Exception as e:
+        print(f"Error downloading with Selenium: {e}")
         return None
 
 
-def reset_driver(driver=None):
-    """Resets the Selenium driver."""
+def quit_driver(driver):
+    """Quits the Selenium driver."""
     try:
         if driver:
             driver.close()
             time.sleep(1)
             driver.quit()
     except Exception as e:
-        print(f"Error resetting driver: {e}")
+        print(f"Error quitting driver: {e}")
+
+
+def reset_driver(driver=None):
+    """Resets the Selenium driver."""
+    quit_driver(driver)
 
     driver = uc.Chrome(options=new_chrome_options())
     time.sleep(1)  # Allow time for the driver to initialize
     return driver
 
 
+def save_bad_sources():
+    """Saves the bad sources to a JSON file."""
+    with open("bad_sources.json", "w", encoding="utf-8") as f:
+        json.dump(bad_sources, f, indent=4)
+    print("Saved bad sources to bad_sources.json")
+
+
 def process_task(task_id, link, driver, output_dir):
     """
     Processes a single task: downloads as PDF if link is a PDF, otherwise saves the HTML content.
     """
-    html_file = os.path.join(output_dir, f"{task_id}.html.gz")
-    article_file = os.path.join(output_dir, f"{task_id}.json")
+    domain = link.split("/")[2]
+    if domain in bad_sources and bad_sources[domain] > FAIL_THRESHOLD:
+        print(f"Skipping {task_id} due to repeated failures for {domain}.")
+
+    html_file = os.path.join(output_dir, "html", f"{task_id}.html.gz")
+    article_file = os.path.join(output_dir, "json", f"{task_id}.json")
     user_agent = random.choice(user_agents)
 
     try:
@@ -206,25 +238,27 @@ def process_task(task_id, link, driver, output_dir):
         if not html:
             # If newsplease fails, try to download using Selenium
             print(f"Newsplease failed to fetch html for {task_id}: {link}")
-            html = process_html_download(link, driver)
+            html = download_html_with_selenium(task_id, link, driver)
 
         if not html:
-            return f"Failed to fetch html for {task_id}: {link}"
+            raise ValueError(
+                f"Failed to fetch html for {task_id}: {link}")
 
         # Save html content
         save_html_content(html, html_file)
+
+        # Parse the article
         article = NewsPlease.from_html(html, url=link)
         if not (article and article.maintext):
-            return f"Failed to parse article for {task_id}: {link}"
+            raise ValueError(
+                f"Failed to parse article for {task_id}: {link}")
 
-        with open(article_file, "w", encoding="utf-8") as f:
-            json.dump(article.get_serializable_dict(), f, indent=4)
-        return f"Saved article: {article_file}"
+        # Save article content
+        save_article_json(article, article_file)
 
     except Exception as e:
+        bad_sources[domain] = bad_sources.get(domain, 0) + 1
         print(f"Unexpected error processing task {task_id}: {e}")
-
-    return f"Failed to process task {task_id}: {link}"
 
 
 class Worker(Thread):
@@ -247,9 +281,8 @@ class Worker(Thread):
             except Empty:
                 continue
 
-            result = process_task(
+            process_task(
                 task_id, link, self.driver, self.output_dir)
-            print(result)
             successful += 1
 
             if successful % 64 == 0 and successful > 0:
@@ -260,16 +293,18 @@ class Worker(Thread):
             self.task_queue.task_done()
 
         # Stop event set or no more tasks: close the driver
-        if self.driver:
-            self.driver.close()
-            time.sleep(1)
-            self.driver.quit()
+        quit_driver(self.driver)
 
 
 def download_links_queue(input_file, output_dir, num_workers=4):
     with open(input_file, "r", encoding="utf-8") as f:
         data = json.load(f)
+
     os.makedirs(output_dir, exist_ok=True)
+    html_output_dir = os.path.join(output_dir, "html")
+    os.makedirs(html_output_dir, exist_ok=True)
+    article_output_dir = os.path.join(output_dir, "json")
+    os.makedirs(article_output_dir, exist_ok=True)
 
     # Patch upfront (to ensure undetected_chromedriver setup)
     temp_driver = uc.Chrome()
@@ -285,7 +320,7 @@ def download_links_queue(input_file, output_dir, num_workers=4):
                 continue
 
             output_file = os.path.join(
-                output_dir, f"{source['refId']}.html.gz")
+                output_dir, "html", f"{source['refId']}.html.gz")
             if os.path.exists(output_file):
                 continue
 
@@ -315,6 +350,8 @@ def download_links_queue(input_file, output_dir, num_workers=4):
                 task_queue.task_done()
             except Empty:
                 break
+    
+    save_bad_sources()
 
     # Wait for all workers to finish
     print("Waiting for workers to finish...")
@@ -323,7 +360,9 @@ def download_links_queue(input_file, output_dir, num_workers=4):
     for w in workers:
         w.join()
 
+    print("All workers have finished.")
+
 
 if __name__ == "__main__":
     download_links_queue(
-        "data/sources_by_interest/story_ids_ai.json", "data/downloads", num_workers=8)
+        "data/sources_by_interest/story_ids_climate-change.json", "data/climate-change", num_workers=8)
