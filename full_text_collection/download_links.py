@@ -26,6 +26,10 @@ session.mount("https://", adapter)
 
 # List of bad sources, domain to failed times
 bad_sources = {}
+skip = [
+    "upstract.com",
+    "www.bloomberg.com"
+]
 
 
 scroll_pause_time = 2
@@ -225,24 +229,37 @@ def process_task(task_id, link, driver, output_dir):
     Processes a single task: downloads as PDF if link is a PDF, otherwise saves the HTML content.
     """
     domain = link.split("/")[2]
-    if domain in bad_sources and bad_sources[domain] > FAIL_THRESHOLD:
+    newsplease_fails = bad_sources.get(domain, {}).get("newsplease", 0)
+    selenium_fails = bad_sources.get(domain, {}).get("selenium", 0)
+    if newsplease_fails > FAIL_THRESHOLD and selenium_fails > FAIL_THRESHOLD:
         print(f"Skipping {task_id} due to repeated failures for {domain}.")
+        return
 
     html_file = os.path.join(output_dir, "html", f"{task_id}.html.gz")
     article_file = os.path.join(output_dir, "json", f"{task_id}.json")
     user_agent = random.choice(user_agents)
 
     try:
-        # Try to use newsplease to download the article
-        html = SimpleCrawler.fetch_url(link, timeout=10, user_agent=user_agent)
-        if not html:
-            # If newsplease fails, try to download using Selenium
-            print(f"Newsplease failed to fetch html for {task_id}: {link}")
-            html = download_html_with_selenium(task_id, link, driver)
+        html = None
 
-        if not html:
-            raise ValueError(
-                f"Failed to fetch html for {task_id}: {link}")
+        if newsplease_fails <= FAIL_THRESHOLD:
+            # Try to use newsplease to download the article
+            html = SimpleCrawler.fetch_url(link, timeout=10, user_agent=user_agent)
+            if not html:
+                # If newsplease fails, try to download using Selenium
+                print(f"Newsplease failed to fetch html for {task_id}: {link}")
+                if domain not in bad_sources:
+                    bad_sources[domain] = {"newsplease": 0, "selenium": 0}
+                bad_sources[domain]["newsplease"] += 1
+        
+        if not html and selenium_fails <= FAIL_THRESHOLD:
+            html = download_html_with_selenium(task_id, link, driver)
+            if not html:
+                if domain not in bad_sources:
+                    bad_sources[domain] = {"newsplease": 0, "selenium": 0}
+                bad_sources[domain]["selenium"] += 1
+                raise ValueError(
+                    f"Failed to fetch html for {task_id}: {link}")
 
         # Save html content
         save_html_content(html, html_file)
@@ -257,7 +274,6 @@ def process_task(task_id, link, driver, output_dir):
         save_article_json(article, article_file)
 
     except Exception as e:
-        bad_sources[domain] = bad_sources.get(domain, 0) + 1
         print(f"Unexpected error processing task {task_id}: {e}")
 
 
@@ -314,7 +330,11 @@ def download_links_queue(input_file, output_dir, num_workers=4):
     data = pd.read_csv(input_file)
 
     # Break tasks into batches of 50
-    for _i, row in data.itertuples():
+    for row in data.itertuples(index=False):
+        domain = row.url.split("/")[2]
+        if domain in skip: # Skip known bad sources
+            continue
+        
         output_file = os.path.join(
             output_dir, "html", f"{row.index}.html.gz")
         if os.path.exists(output_file):
