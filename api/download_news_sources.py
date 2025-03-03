@@ -14,6 +14,8 @@ USER_AGENT = (
     "Chrome/132.0.6788.76 Safari/537.36"
 )
 
+LIMIT = 1000
+
 async def fetch_news_source(client: httpx.AsyncClient, story_id: str) -> dict:
     """
     Fetch news source data for a given story ID.
@@ -51,6 +53,9 @@ async def process_csv_file(csv_file: str, output_dir: str):
         return
     
     story_ids = read_story_ids_from_csv(csv_file)
+    if LIMIT and len(story_ids) > LIMIT:
+        story_ids = story_ids[:LIMIT]
+    
     results = {}
     async with httpx.AsyncClient() as client:
         for story_id in story_ids:

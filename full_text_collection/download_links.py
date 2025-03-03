@@ -47,6 +47,7 @@ def new_chrome_options():
     options.add_argument("--remote-allow-origins=*")
     options.add_argument("--ignore-certificate-errors")
     options.add_argument("--allow-insecure-localhost")
+    options.add_argument("--disable-gpu")
     options.add_argument(
         '--load-extension=D:/crx/bypass-paywalls-chrome-clean-4.0.5.7')
     prefs = {
@@ -56,7 +57,6 @@ def new_chrome_options():
         "profile.managed_default_content_settings.videos": 2
     }
     options.add_experimental_option("prefs", prefs)
-    # options.add_argument("--headless=new")
     return options
 
 
@@ -109,7 +109,7 @@ def process_pdf_download(link, pdf_filename):
     return result
 
 
-def scroll_to_bottom(driver, pause_time=2):
+def scroll_to_bottom(driver, pause_time=1):
     """Scrolls to the bottom of the page to load all dynamic content."""
     try:
         last_height = driver.execute_script(
@@ -145,7 +145,7 @@ def load_page(driver, link, pause_time=2):
         # Switch back to the original link tab
         driver.switch_to.window(link_tab)
 
-        WebDriverWait(driver, 5).until(
+        WebDriverWait(driver, 3).until(
             lambda drv: drv.execute_script(
                 "return document.readyState") == "complete" and
             EC.presence_of_element_located((By.TAG_NAME, "body"))
@@ -285,7 +285,7 @@ class Worker(Thread):
                 task_id, link, self.driver, self.output_dir)
             successful += 1
 
-            if successful % 64 == 0 and successful > 0:
+            if successful % 128 == 0 and successful > 0:
                 # Reset the driver every 64 tasks
                 self.driver = reset_driver(self.driver)
 
@@ -297,9 +297,7 @@ class Worker(Thread):
 
 
 def download_links_queue(input_file, output_dir, num_workers=4):
-    with open(input_file, "r", encoding="utf-8") as f:
-        data = json.load(f)
-
+    """Download HTML content for a list of URLs using a queue of workers."""
     os.makedirs(output_dir, exist_ok=True)
     html_output_dir = os.path.join(output_dir, "html")
     os.makedirs(html_output_dir, exist_ok=True)
@@ -313,18 +311,16 @@ def download_links_queue(input_file, output_dir, num_workers=4):
     stop_event = Event()
     task_queue = Queue()
 
+    data = pd.read_csv(input_file)
+
     # Break tasks into batches of 50
-    for _sid, story in data.items():
-        for source in story["sources"]:
-            if not source.get("url"):
-                continue
+    for _i, row in data.itertuples():
+        output_file = os.path.join(
+            output_dir, "html", f"{row.index}.html.gz")
+        if os.path.exists(output_file):
+            continue
 
-            output_file = os.path.join(
-                output_dir, "html", f"{source['refId']}.html.gz")
-            if os.path.exists(output_file):
-                continue
-
-            task_queue.put((source['refId'], source['url']))
+        task_queue.put((row.index, row.url))
 
     print(f"Total tasks: {task_queue.qsize()}")
 
@@ -350,7 +346,7 @@ def download_links_queue(input_file, output_dir, num_workers=4):
                 task_queue.task_done()
             except Empty:
                 break
-    
+
     save_bad_sources()
 
     # Wait for all workers to finish
@@ -365,4 +361,4 @@ def download_links_queue(input_file, output_dir, num_workers=4):
 
 if __name__ == "__main__":
     download_links_queue(
-        "data/sources_by_interest/story_ids_climate-change.json", "data/climate-change", num_workers=8)
+        "data/urls.csv", "data/topics", num_workers=8)
