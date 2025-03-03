@@ -9,7 +9,6 @@ from threading import Thread, Event
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util import Retry
 
-
 import certifi
 import pandas as pd
 from newsplease import NewsPlease, SimpleCrawler
@@ -31,7 +30,6 @@ skip = [
     "www.bloomberg.com"
 ]
 
-
 scroll_pause_time = 2
 FAIL_THRESHOLD = 8
 
@@ -43,7 +41,7 @@ user_agents = [
 ]
 
 
-def new_chrome_options():
+def new_chrome_options(extension_path=None):
     options = uc.ChromeOptions()
     options.add_argument(f"user-agent={random.choice(user_agents)}")
     options.add_argument("--disable-blink-features=AutomationControlled")
@@ -52,8 +50,9 @@ def new_chrome_options():
     options.add_argument("--ignore-certificate-errors")
     options.add_argument("--allow-insecure-localhost")
     options.add_argument("--disable-gpu")
-    options.add_argument(
-        '--load-extension=D:/crx/bypass-paywalls-chrome-clean-4.0.5.7')
+    if extension_path:
+        options.add_argument(f'--load-extension={extension_path}')
+    # If no extension_path is provided, you could either add a default extension or omit the argument.
     prefs = {
         # Disable images
         "profile.managed_default_content_settings.images": 2,
@@ -116,17 +115,13 @@ def process_pdf_download(link, pdf_filename):
 def scroll_to_bottom(driver, pause_time=1):
     """Scrolls to the bottom of the page to load all dynamic content."""
     try:
-        last_height = driver.execute_script(
-            "return document.body.scrollHeight")
+        last_height = driver.execute_script("return document.body.scrollHeight")
         for _ in range(3):  # Limit to 3 scrolls
-            driver.execute_script(
-                "window.scrollTo(0, document.body.scrollHeight);")
+            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
             time.sleep(pause_time)  # Wait for new content to load
-            new_height = driver.execute_script(
-                "return document.body.scrollHeight")
+            new_height = driver.execute_script("return document.body.scrollHeight")
             if new_height == last_height:
                 break
-
             last_height = new_height
     except Exception as e:
         raise RuntimeError(f"Error while scrolling: {e}") from e
@@ -150,8 +145,7 @@ def load_page(driver, link, pause_time=2):
         driver.switch_to.window(link_tab)
 
         WebDriverWait(driver, 3).until(
-            lambda drv: drv.execute_script(
-                "return document.readyState") == "complete" and
+            lambda drv: drv.execute_script("return document.readyState") == "complete" and
             EC.presence_of_element_located((By.TAG_NAME, "body"))
         )
 
@@ -188,9 +182,7 @@ def download_html_with_selenium(task_id, link, driver):
         load_page(driver, link)
         html = driver.page_source
         if not html:
-            raise ValueError(
-                f"Failed to fetch HTML with Selenium for {task_id}: {link}")
-
+            raise ValueError(f"Failed to fetch HTML with Selenium for {task_id}: {link}")
         return html
     except Exception as e:
         print(f"Error downloading with Selenium: {e}")
@@ -208,11 +200,17 @@ def quit_driver(driver):
         print(f"Error quitting driver: {e}")
 
 
-def reset_driver(driver=None):
+def reset_driver(driver=None, driver_executable_path=None, browser_executable_path=None, extension_path=None):
     """Resets the Selenium driver."""
     quit_driver(driver)
-
-    driver = uc.Chrome(options=new_chrome_options())
+    options = new_chrome_options(extension_path=extension_path)
+    if driver_executable_path:
+        driver = uc.Chrome(options=options,
+                           driver_executable_path=driver_executable_path,
+                           browser_executable_path=browser_executable_path)
+    else:
+        driver = uc.Chrome(options=options,
+                           browser_executable_path=browser_executable_path)
     time.sleep(1)  # Allow time for the driver to initialize
     return driver
 
@@ -251,15 +249,14 @@ def process_task(task_id, link, driver, output_dir):
                 if domain not in bad_sources:
                     bad_sources[domain] = {"newsplease": 0, "selenium": 0}
                 bad_sources[domain]["newsplease"] += 1
-        
+
         if not html and selenium_fails <= FAIL_THRESHOLD:
             html = download_html_with_selenium(task_id, link, driver)
             if not html:
                 if domain not in bad_sources:
                     bad_sources[domain] = {"newsplease": 0, "selenium": 0}
                 bad_sources[domain]["selenium"] += 1
-                raise ValueError(
-                    f"Failed to fetch html for {task_id}: {link}")
+                raise ValueError(f"Failed to fetch html for {task_id}: {link}")
 
         # Save html content
         save_html_content(html, html_file)
@@ -267,8 +264,7 @@ def process_task(task_id, link, driver, output_dir):
         # Parse the article
         article = NewsPlease.from_html(html, url=link)
         if not (article and article.maintext):
-            raise ValueError(
-                f"Failed to parse article for {task_id}: {link}")
+            raise ValueError(f"Failed to parse article for {task_id}: {link}")
 
         # Save article content
         save_article_json(article, article_file)
@@ -278,41 +274,50 @@ def process_task(task_id, link, driver, output_dir):
 
 
 class Worker(Thread):
-    def __init__(self, task_queue, output_dir, stop_event):
+    def __init__(self, task_queue, output_dir, stop_event,
+                 driver_executable_path=None, browser_executable_path=None, extension_path=None):
         super().__init__()
         self.task_queue = task_queue
         self.output_dir = output_dir
         self.stop_event = stop_event
+        self.driver_executable_path = driver_executable_path
+        self.browser_executable_path = browser_executable_path
+        self.extension_path = extension_path
         self.driver = None
 
     def run(self):
-        # Initialize a single driver for this thread
-        self.driver = reset_driver()
+        # Initialize a single driver for this thread with the new parameters
+        self.driver = reset_driver(driver_executable_path=self.driver_executable_path,
+                                   browser_executable_path=self.browser_executable_path,
+                                   extension_path=self.extension_path)
         successful = 0
 
         while not self.stop_event.is_set():
             try:
-                # Get a batch of tasks
+                # Get a task from the queue
                 task_id, link = self.task_queue.get(timeout=1)
             except Empty:
                 continue
 
-            process_task(
-                task_id, link, self.driver, self.output_dir)
+            process_task(task_id, link, self.driver, self.output_dir)
             successful += 1
 
             if successful % 128 == 0 and successful > 0:
-                # Reset the driver every 64 tasks
-                self.driver = reset_driver(self.driver)
+                # Reset the driver every 128 tasks
+                self.driver = reset_driver(self.driver,
+                                           driver_executable_path=self.driver_executable_path,
+                                           browser_executable_path=self.browser_executable_path,
+                                           extension_path=self.extension_path)
 
-            # Finished processing this batch
+            # Finished processing this task
             self.task_queue.task_done()
 
         # Stop event set or no more tasks: close the driver
         quit_driver(self.driver)
 
 
-def download_links_queue(input_file, output_dir, num_workers=4):
+def download_links_queue(input_file, output_dir, num_workers=4,
+                         driver_executable_path=None, browser_executable_path=None, extension_path=None):
     """Download HTML content for a list of URLs using a queue of workers."""
     os.makedirs(output_dir, exist_ok=True)
     html_output_dir = os.path.join(output_dir, "html")
@@ -321,7 +326,13 @@ def download_links_queue(input_file, output_dir, num_workers=4):
     os.makedirs(article_output_dir, exist_ok=True)
 
     # Patch upfront (to ensure undetected_chromedriver setup)
-    temp_driver = uc.Chrome()
+    if driver_executable_path:
+        temp_driver = uc.Chrome(driver_executable_path=driver_executable_path,
+                                browser_executable_path=browser_executable_path,
+                                options=new_chrome_options(extension_path=extension_path))
+    else:
+        temp_driver = uc.Chrome(browser_executable_path=browser_executable_path,
+                                options=new_chrome_options(extension_path=extension_path))
     temp_driver.close()
 
     stop_event = Event()
@@ -332,11 +343,10 @@ def download_links_queue(input_file, output_dir, num_workers=4):
     # Break tasks into batches of 50
     for row in data.itertuples(index=False):
         domain = row.url.split("/")[2]
-        if domain in skip: # Skip known bad sources
+        if domain in skip:  # Skip known bad sources
             continue
-        
-        output_file = os.path.join(
-            output_dir, "html", f"{row.index}.html.gz")
+
+        output_file = os.path.join(output_dir, "html", f"{row.index}.html.gz")
         if os.path.exists(output_file):
             continue
 
@@ -344,8 +354,11 @@ def download_links_queue(input_file, output_dir, num_workers=4):
 
     print(f"Total tasks: {task_queue.qsize()}")
 
-    # Start workers
-    workers = [Worker(task_queue, output_dir, stop_event)
+    # Start workers with the new parameters
+    workers = [Worker(task_queue, output_dir, stop_event,
+                      driver_executable_path=driver_executable_path,
+                      browser_executable_path=browser_executable_path,
+                      extension_path=extension_path)
                for _ in range(num_workers)]
     for w in workers:
         w.start()
@@ -359,7 +372,7 @@ def download_links_queue(input_file, output_dir, num_workers=4):
         # Signal workers to stop
         stop_event.set()
 
-        # Clear any remaining batches
+        # Clear any remaining tasks in the queue
         while not task_queue.empty():
             try:
                 task_queue.get_nowait()
@@ -371,7 +384,6 @@ def download_links_queue(input_file, output_dir, num_workers=4):
 
     # Wait for all workers to finish
     print("Waiting for workers to finish...")
-
     stop_event.set()
     for w in workers:
         w.join()
@@ -380,5 +392,31 @@ def download_links_queue(input_file, output_dir, num_workers=4):
 
 
 if __name__ == "__main__":
-    download_links_queue(
-        "data/urls.csv", "data/topics", num_workers=8)
+    import platform
+
+    display = None
+    # If running on Linux, start a virtual display
+    if platform.system() == "Linux":
+        try:
+            from pyvirtualdisplay import Display
+            display = Display(visible=0, size=(1920, 1080))
+            display.start()
+            print("Virtual display started on Linux.")
+        except ImportError as e:
+            print("pyvirtualdisplay is not installed. Please install it to run on Linux.")
+
+    try:
+        # Replace the placeholder paths with your actual paths if needed.
+        download_links_queue(
+            "data/urls.csv",
+            "data/topics",
+            num_workers=8,
+            driver_executable_path="./chrome/chromedriver-linux64/chromedriver",
+            browser_executable_path="./chrome/chrome-linux64/chrome",
+            extension_path="/scratch/midway3/tzhang3/crx/bypass-paywalls-chrome-clean-master"
+        )
+    finally:
+        if display:
+            display.stop()
+            print("Virtual display stopped.")
+
