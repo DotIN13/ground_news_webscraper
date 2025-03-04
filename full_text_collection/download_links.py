@@ -193,11 +193,13 @@ def download_html_with_selenium(task_id, link, driver):
 
 def quit_driver(driver):
     """Quits the Selenium driver."""
-    try:
-        if driver:
-            driver.close()
-            time.sleep(1)
-            driver.quit()
+    if not driver:
+        return
+
+    try: 
+        driver.close()
+        time.sleep(1)
+        driver.quit()
     except Exception as e:
         print(f"Error quitting driver: {e}")
 
@@ -339,12 +341,10 @@ def download_links_queue(input_file, output_dir, start=0, end=None, num_workers=
     load_bad_sources()
 
     # Patch upfront (to ensure undetected_chromedriver setup)
-    chrome_args = {}
-    if driver_executable_path:
-        chrome_args["driver_executable_path"] = driver_executable_path
-    if browser_executable_path:
-        chrome_args["browser_executable_path"] = browser_executable_path
-    temp_driver = uc.Chrome(**chrome_args)
+    temp_driver = reset_driver(
+        driver_executable_path=driver_executable_path,
+        browser_executable_path=browser_executable_path,
+        extension_path=extension_path)
     temp_driver.close()
 
     stop_event = Event()
