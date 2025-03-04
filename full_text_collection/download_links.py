@@ -43,7 +43,7 @@ user_agents = [
 ]
 
 
-def new_chrome_options(extension_path=None):
+def new_chrome_options(extension_path=None, profile_directory=None):
     """Create a new ChromeOptions object with custom settings."""
     options = uc.ChromeOptions()
     options.add_argument(f"user-agent={random.choice(user_agents)}")
@@ -55,6 +55,8 @@ def new_chrome_options(extension_path=None):
     options.add_argument("--disable-gpu")
     if extension_path:
         options.add_argument(f'--load-extension={extension_path}')
+    if profile_directory:
+        options.add_argument(f'--profile-directory={profile_directory}')
     # If no extension_path is provided, you could either add a default extension or omit the argument.
     prefs = {
         # Disable images
@@ -209,12 +211,14 @@ def reset_driver(driver=None,
                  driver_executable_path=None,
                  browser_executable_path=None,
                  extension_path=None,
-                 user_data_dir=None):
+                 user_data_dir=None,
+                 profile_directory=None):
     """Resets the Selenium driver."""
     quit_driver(driver)
 
     options = new_chrome_options(
-        extension_path=extension_path)
+        extension_path=extension_path,
+        profile_directory=profile_directory)
     chrome_args = {"options": options}
     if driver_executable_path:
         chrome_args["driver_executable_path"] = driver_executable_path
@@ -297,7 +301,8 @@ def process_task(task_id, link, driver, output_dir):
 class Worker(Thread):
     def __init__(self, task_queue, output_dir, stop_event,
                  driver_executable_path=None, browser_executable_path=None,
-                 extension_path=None, user_data_dir=None):
+                 extension_path=None, user_data_dir=None,
+                 profile_directory=None):
         super().__init__()
         self.task_queue = task_queue
         self.output_dir = output_dir
@@ -306,6 +311,7 @@ class Worker(Thread):
         self.browser_executable_path = browser_executable_path
         self.extension_path = extension_path
         self.user_data_dir = user_data_dir
+        self.profile_directory = profile_directory
         self.driver = None
 
     def run(self):
@@ -313,7 +319,8 @@ class Worker(Thread):
         self.driver = reset_driver(driver_executable_path=self.driver_executable_path,
                                    browser_executable_path=self.browser_executable_path,
                                    extension_path=self.extension_path,
-                                   user_data_dir=self.user_data_dir)
+                                   user_data_dir=self.user_data_dir,
+                                   profile_directory=self.profile_directory)
         successful = 0
 
         while not self.stop_event.is_set():
@@ -332,7 +339,8 @@ class Worker(Thread):
                                            driver_executable_path=self.driver_executable_path,
                                            browser_executable_path=self.browser_executable_path,
                                            extension_path=self.extension_path,
-                                           user_data_dir=self.user_data_dir)
+                                           user_data_dir=self.user_data_dir,
+                                           profile_directory=self.profile_directory)
 
             # Finished processing this task
             self.task_queue.task_done()
@@ -343,7 +351,7 @@ class Worker(Thread):
 
 def download_links_queue(input_file, output_dir, start=0, end=None, num_workers=4,
                          driver_executable_path=None, browser_executable_path=None,
-                         extension_path=None, user_data_dir=None):
+                         extension_path=None, user_data_dir=None, profile_directory=None):
     """Download HTML content for a list of URLs using a queue of workers."""
     os.makedirs(output_dir, exist_ok=True)
     html_output_dir = os.path.join(output_dir, "html")
@@ -361,7 +369,8 @@ def download_links_queue(input_file, output_dir, start=0, end=None, num_workers=
         driver_executable_path=driver_executable_path,
         browser_executable_path=browser_executable_path,
         extension_path=extension_path,
-        user_data_dir=user_data_dir)
+        user_data_dir=user_data_dir,
+        profile_directory=profile_directory)
     temp_driver.close()
 
     stop_event = Event()
@@ -393,7 +402,8 @@ def download_links_queue(input_file, output_dir, start=0, end=None, num_workers=
                       driver_executable_path=driver_executable_path,
                       browser_executable_path=browser_executable_path,
                       extension_path=extension_path,
-                      user_data_dir=user_data_dir)
+                      user_data_dir=user_data_dir,
+                      profile_directory=profile_directory)
                for _ in range(num_workers)]
     for w in workers:
         w.start()
@@ -437,6 +447,7 @@ if __name__ == "__main__":
     parser.add_argument("--browser_executable_path", type=str, default=None, help="Path to the Chrome browser executable")
     parser.add_argument("--extension_path", type=str, default=None, help="Path to the Chrome extension to load")
     parser.add_argument("--user_data_dir", type=str, default=None, help="Path to the Chrome user data directory")
+    parser.add_argument("--profile_directory", type=str, default=None, help="Path to the Chrome profile directory")
     parser.add_argument("--display_backend", type=str, default="xvfb", help="Display backend to use (e.g., x11, xvfb)")
     args = parser.parse_args()
 
@@ -461,7 +472,8 @@ if __name__ == "__main__":
             driver_executable_path=args.driver_executable_path,
             browser_executable_path=args.browser_executable_path,
             extension_path=args.extension_path,
-            user_data_dir=args.user_data_dir
+            user_data_dir=args.user_data_dir,
+            profile_directory=args.profile_directory
         )
     finally:
         if display:
