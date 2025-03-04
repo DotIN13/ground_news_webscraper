@@ -352,6 +352,9 @@ def download_links_queue(input_file, output_dir, start=0, end=None, num_workers=
     article_output_dir = os.path.join(output_dir, "json")
     os.makedirs(article_output_dir, exist_ok=True)
     
+    if user_data_dir:
+        os.makedirs(user_data_dir, exist_ok=True)
+    
     load_bad_sources()
 
     # Patch upfront (to ensure undetected_chromedriver setup)
