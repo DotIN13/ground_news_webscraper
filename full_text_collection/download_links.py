@@ -57,6 +57,7 @@ def new_chrome_options(extension_path=None, user_data_dir=None):
         options.add_argument(f'--load-extension={extension_path}')
     if user_data_dir:
         options.add_argument(f'--user-data-dir={user_data_dir}')
+        options.add_argument("--profile-directory=Default")
     # If no extension_path is provided, you could either add a default extension or omit the argument.
     prefs = {
         # Disable images
