@@ -4,6 +4,8 @@ import time
 import random
 import requests
 import gzip
+import platform
+import argparse
 from queue import Queue, Empty
 from threading import Thread, Event
 from requests.adapters import HTTPAdapter
@@ -203,14 +205,15 @@ def quit_driver(driver):
 def reset_driver(driver=None, driver_executable_path=None, browser_executable_path=None, extension_path=None):
     """Resets the Selenium driver."""
     quit_driver(driver)
+
     options = new_chrome_options(extension_path=extension_path)
+    chrome_args = {"options": options}
     if driver_executable_path:
-        driver = uc.Chrome(options=options,
-                           driver_executable_path=driver_executable_path,
-                           browser_executable_path=browser_executable_path)
-    else:
-        driver = uc.Chrome(options=options,
-                           browser_executable_path=browser_executable_path)
+        chrome_args["driver_executable_path"] = driver_executable_path
+    if browser_executable_path:
+        chrome_args["browser_executable_path"] = browser_executable_path
+        
+    driver = uc.Chrome(**chrome_args)
     time.sleep(1)  # Allow time for the driver to initialize
     return driver
 
@@ -220,6 +223,14 @@ def save_bad_sources():
     with open("bad_sources.json", "w", encoding="utf-8") as f:
         json.dump(bad_sources, f, indent=4)
     print("Saved bad sources to bad_sources.json")
+
+def load_bad_sources():
+    """Loads the bad sources from a JSON file."""
+    global bad_sources
+    if os.path.exists("bad_sources.json"):
+        with open("bad_sources.json", "r", encoding="utf-8") as f:
+            bad_sources = json.load(f)
+    print("Loaded bad sources from bad_sources.json")
 
 
 def process_task(task_id, link, driver, output_dir):
@@ -302,7 +313,7 @@ class Worker(Thread):
             process_task(task_id, link, self.driver, self.output_dir)
             successful += 1
 
-            if successful % 128 == 0 and successful > 0:
+            if successful % 64 == 0 and successful > 0:
                 # Reset the driver every 128 tasks
                 self.driver = reset_driver(self.driver,
                                            driver_executable_path=self.driver_executable_path,
@@ -316,7 +327,7 @@ class Worker(Thread):
         quit_driver(self.driver)
 
 
-def download_links_queue(input_file, output_dir, num_workers=4,
+def download_links_queue(input_file, output_dir, start=0, end=None, num_workers=4,
                          driver_executable_path=None, browser_executable_path=None, extension_path=None):
     """Download HTML content for a list of URLs using a queue of workers."""
     os.makedirs(output_dir, exist_ok=True)
@@ -324,15 +335,16 @@ def download_links_queue(input_file, output_dir, num_workers=4,
     os.makedirs(html_output_dir, exist_ok=True)
     article_output_dir = os.path.join(output_dir, "json")
     os.makedirs(article_output_dir, exist_ok=True)
+    
+    load_bad_sources()
 
     # Patch upfront (to ensure undetected_chromedriver setup)
+    chrome_args = {}
     if driver_executable_path:
-        temp_driver = uc.Chrome(driver_executable_path=driver_executable_path,
-                                browser_executable_path=browser_executable_path,
-                                options=new_chrome_options(extension_path=extension_path))
-    else:
-        temp_driver = uc.Chrome(browser_executable_path=browser_executable_path,
-                                options=new_chrome_options(extension_path=extension_path))
+        chrome_args["driver_executable_path"] = driver_executable_path
+    if browser_executable_path:
+        chrome_args["browser_executable_path"] = browser_executable_path
+    temp_driver = uc.Chrome(**chrome_args)
     temp_driver.close()
 
     stop_event = Event()
@@ -342,6 +354,11 @@ def download_links_queue(input_file, output_dir, num_workers=4,
 
     # Break tasks into batches of 50
     for row in data.itertuples(index=False):
+        if row.index < start:
+            continue
+        if end and row.index >= end:
+            break
+
         domain = row.url.split("/")[2]
         if domain in skip:  # Skip known bad sources
             continue
@@ -392,10 +409,19 @@ def download_links_queue(input_file, output_dir, num_workers=4,
 
 
 if __name__ == "__main__":
-    import platform
+    parser = argparse.ArgumentParser(description="Download articles using Selenium and NewsPlease")
+    parser.add_argument("-i", "--input_file", help="Path to the CSV file containing URLs")
+    parser.add_argument("-o", "--output_dir", help="Directory where HTML and JSON files will be saved")
+    parser.add_argument("--start", type=int, default=0, help="Starting index for the task IDs (default: 0)")
+    parser.add_argument("--end", type=int, default=None, help="Ending index for the task IDs (default: None)")
+    parser.add_argument("--num_workers", type=int, default=8, help="Number of worker threads (default: 8)")
+    parser.add_argument("--driver_executable_path", type=str, default=None, help="Path to the ChromeDriver executable")
+    parser.add_argument("--browser_executable_path", type=str, default=None, help="Path to the Chrome browser executable")
+    parser.add_argument("--extension_path", type=str, default=None, help="Path to the Chrome extension to load")
+    args = parser.parse_args()
 
+    # If running on Linux, attempt to start a virtual display
     display = None
-    # If running on Linux, start a virtual display
     if platform.system() == "Linux":
         try:
             from pyvirtualdisplay import Display
@@ -406,17 +432,17 @@ if __name__ == "__main__":
             print("pyvirtualdisplay is not installed. Please install it to run on Linux.")
 
     try:
-        # Replace the placeholder paths with your actual paths if needed.
         download_links_queue(
-            "data/urls.csv",
-            "data/topics",
-            num_workers=8,
-            driver_executable_path="./chrome/chromedriver-linux64/chromedriver",
-            browser_executable_path="./chrome/chrome-linux64/chrome",
-            extension_path="/scratch/midway3/tzhang3/crx/bypass-paywalls-chrome-clean-master"
+            input_file=args.input_file,
+            output_dir=args.output_dir,
+            start=args.start,
+            end=args.end,
+            num_workers=args.num_workers,
+            driver_executable_path=args.driver_executable_path,
+            browser_executable_path=args.browser_executable_path,
+            extension_path=args.extension_path
         )
     finally:
         if display:
             display.stop()
             print("Virtual display stopped.")
-

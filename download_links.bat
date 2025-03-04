@@ -1,0 +1,1 @@
+python .\full_text_collection\download_links.py -i .\data\urls.csv -o .\data\topics\ --start 150000 --extension_path D:\crx\bypass-paywalls-chrome-clean-4.0.5.7\
