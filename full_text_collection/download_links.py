@@ -43,7 +43,7 @@ user_agents = [
 ]
 
 
-def new_chrome_options(extension_path=None, user_data_dir=None):
+def new_chrome_options(extension_path=None):
     """Create a new ChromeOptions object with custom settings."""
     options = uc.ChromeOptions()
     options.add_argument(f"user-agent={random.choice(user_agents)}")
@@ -55,9 +55,6 @@ def new_chrome_options(extension_path=None, user_data_dir=None):
     options.add_argument("--disable-gpu")
     if extension_path:
         options.add_argument(f'--load-extension={extension_path}')
-    if user_data_dir:
-        options.add_argument(f'--user-data-dir={user_data_dir}')
-        options.add_argument("--profile-directory=Default")
     # If no extension_path is provided, you could either add a default extension or omit the argument.
     prefs = {
         # Disable images
@@ -217,13 +214,14 @@ def reset_driver(driver=None,
     quit_driver(driver)
 
     options = new_chrome_options(
-        extension_path=extension_path,
-        user_data_dir=user_data_dir)
+        extension_path=extension_path)
     chrome_args = {"options": options}
     if driver_executable_path:
         chrome_args["driver_executable_path"] = driver_executable_path
     if browser_executable_path:
         chrome_args["browser_executable_path"] = browser_executable_path
+    if user_data_dir:
+        chrome_args["user_data_dir"] = user_data_dir
         
     driver = uc.Chrome(**chrome_args)
     time.sleep(1)  # Allow time for the driver to initialize
